@@ -1,0 +1,106 @@
+version: 2.1
+
+jobs:
+  build:
+    docker:
+      - image: cimg/openjdk:8.0
+    # Specify the working directory for the created docker container
+    # - all (relative) paths below will be relative to this directory
+    working_directory: ~/project-fox-dining/backend
+    
+    environment:
+      # Customize the JVM maximum heap limit
+      JVM_OPTS: -Xmx3200m
+      TERM: dumb
+
+    steps:
+      - checkout:
+          path: ~/project-fox-dining
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+            - v1-dependencies-{{ checksum "build.gradle" }}
+            # fallback to using the latest cache if no exact match is found
+            - v1-dependencies-
+      - run: gradle dependencies
+      - save_cache:
+          paths:
+            - ~/.gradle
+          key: v1-dependencies-{{ checksum "build.gradle" }}
+      - run: gradle build -x test -x checkstyleMain -x checkstyleTest
+      
+  test:
+    docker:
+      - image: cimg/openjdk:8.0
+    environment:
+      SMTP_HOST: smtp.mailtrap.io
+      SMTP_PORT: 2525
+
+    working_directory: ~/project-fox-dining/backend
+
+    steps:
+      - checkout:
+          path: ~/project-fox-dining
+      - run: gradle test
+      - run:
+          name: Generate code coverage report
+          command: gradle jacocoTestReport
+
+      - store_test_results:
+          # Report files must be in a subfolder. Test data must be inside a 
+          # subfolder of whatever path is provided to store_test_results. 
+          # If the path is set to test-results then the test report file must 
+          # be in a subfolder of test-results, and not directly within it. 
+          # For example: test-results/somefolder/report.xml
+          # @see: https://support.circleci.com/hc/en-us/articles/360021624194-Test-summary-troubleshooting
+          path: build/test-results
+          destination: test-results
+      - store_artifacts:
+          path: build/reports/tests/test
+          destination: test-reports
+      - store_artifacts:
+          path: build/jacoco
+          destination: test-coverage
+
+  checkstyle:
+    docker:
+      - image: cimg/openjdk:8.0
+    environment:
+      SMTP_HOST: smtp.mailtrap.io
+      SMTP_PORT: 2525
+
+    working_directory: ~/project-fox-dining/backend
+    steps:
+      - checkout:
+          path: ~/project-fox-dining
+      - run:
+          name: Build project
+          command: gradle build
+      - run: gradle test
+      - run: gradle checkstyleMain
+      - run: gradle checkstyleTest
+      - run: 
+          name: Test Coverage Verification (min. 80% per line)
+          command: gradle jacocoTestCoverageVerification
+
+      - store_artifacts:
+          path: build/reports/checkstyle
+          destination: checkstyle
+
+workflows:
+  checkstyle_build_and_test:
+    jobs:
+      - checkstyle:
+          context:
+            - mailtrap
+      - build
+      - test:
+          context:
+            - mailtrap
+          requires:
+            - build
+
+# The values for SMTP_USERNAME and SMTP_PASSWORD
+# are provided in the `mailtrap` context under
+# Organization Settings > Contexts on app.circleci.com
+# see: https://circleci.com/docs/contexts
